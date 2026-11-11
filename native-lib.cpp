@@ -9,24 +9,40 @@ Java_com_example_unicreate_NativeHelper_applySmudge(
         jint canvasW, jint canvasH,
         jfloat strength) {
     
-    // Отримуємо доступ до масиву пікселів
     jint* pixels = env->GetIntArrayElements(smudge_pixels, nullptr);
     if (pixels == nullptr) return;
 
-    // Створюємо тимчасовий масив для результату, щоб не псувати сусідні пікселі під час розрахунку
     jint* resultPixels = new jint[diameter * diameter];
 
-    // Проходимо по кожному пікселю в маленькому квадраті (діаметрі)
+    float cx = diameter / 2.0f;
+    float cy = diameter / 2.0f;
+    float maxR = diameter / 2.0f;
+
+    // Збільшуємо радіус розмиття для кращого ефекту (було 1, стало 3)
+    int blurRadius = 3; 
+
     for (int y = 0; y < diameter; y++) {
         for (int x = 0; x < diameter; x++) {
             int idx = y * diameter + x;
             
+            // Створюємо круглу м'яку маску
+            float dx_center = x - cx;
+            float dy_center = y - cy;
+            float dist = std::sqrt(dx_center * dx_center + dy_center * dy_center);
+            float alphaMask = 1.0f - (dist / maxR);
+            if (alphaMask < 0) alphaMask = 0;
+
+            if (alphaMask == 0.0f) {
+                resultPixels[idx] = 0;
+                continue;
+            }
+
             int r = 0, g = 0, b = 0, a = 0;
             int count = 0;
 
-            // Беремо сусідні пікселі (радіус 1 піксель, тобто 3x3)
-            for (int dy = -1; dy <= 1; dy++) {
-                for (int dx = -1; dx <= 1; dx++) {
+            // Розмиття
+            for (int dy = -blurRadius; dy <= blurRadius; dy++) {
+                for (int dx = -blurRadius; dx <= blurRadius; dx++) {
                     int nx = x + dx;
                     int ny = y + dy;
                     
@@ -41,13 +57,16 @@ Java_com_example_unicreate_NativeHelper_applySmudge(
                 }
             }
 
-            // Знаходимо середнє значення кольору
+            if (count == 0) {
+                resultPixels[idx] = 0;
+                continue;
+            }
+
             int avgA = a / count;
             int avgR = r / count;
             int avgG = g / count;
             int avgB = b / count;
 
-            // Змішуємо оригінальний колір з розмитим (залежно від strength)
             int origColor = pixels[idx];
             int origA = (origColor >> 24) & 0xFF;
             int origR = (origColor >> 16) & 0xFF;
@@ -59,19 +78,17 @@ Java_com_example_unicreate_NativeHelper_applySmudge(
             int finalG = (int)(origG * (1.0f - strength) + avgG * strength);
             int finalB = (int)(origB * (1.0f - strength) + avgB * strength);
 
-            // Записуємо в тимчасовий масив
+            // Застосовуємо маску до прозорості (краї стануть прозорими)
+            finalA = (int)(finalA * alphaMask);
+
             resultPixels[idx] = (finalA << 24) | (finalR << 16) | (finalG << 8) | finalB;
         }
     }
 
-    // Копіюємо результат назад у масив, який прийшов з Java
     for (int i = 0; i < diameter * diameter; i++) {
         pixels[i] = resultPixels[i];
     }
 
-    // Звільняємо пам'ять
     delete[] resultPixels;
-    
-    // Повертаємо масив у Java
     env->ReleaseIntArrayElements(smudge_pixels, pixels, 0);
 }
