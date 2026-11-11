@@ -1,0 +1,23 @@
+name: Build Android SO
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r26b
+    - name: Build with ndk-build
+      run: |
+        mkdir -p jni
+        mv native-lib.cpp jni/
+        mv Android.mk jni/
+        mv Application.mk jni/
+        $ANDROID_NDK_HOME/ndk-build NDK_PROJECT_PATH=.
+    - name: Upload SO
+      uses: actions/upload-artifact@v4
+      with:
+        name: libnative-lib
+        path: libs/arm64-v8a/libnative-lib.so
