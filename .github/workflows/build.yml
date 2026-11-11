@@ -1,4 +1,4 @@
-name: Build Android SO
+name: Build C++ SO
 on: [push]
 jobs:
   build:
@@ -9,29 +9,25 @@ jobs:
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
       with:
-        ndk-version: r25c
+        ndk-version: r26b
         
-    - name: Create Makefiles and Build
+    - name: Compile with CMake
       run: |
-        mkdir -p jni
-        cp native-lib.cpp jni/
+        # Створюємо папку для збірки
+        mkdir build
+        cd build
         
-        # Створюємо Android.mk
-        echo "LOCAL_PATH := \$(call my-dir)" > jni/Android.mk
-        echo "include \$(CLEAR_VARS)" >> jni/Android.mk
-        echo "LOCAL_MODULE    := native-lib" >> jni/Android.mk
-        echo "LOCAL_SRC_FILES := native-lib.cpp" >> jni/Android.mk
-        echo "include \$(BUILD_SHARED_LIBRARY)" >> jni/Android.mk
-        
-        # Створюємо Application.mk
-        echo "APP_ABI := arm64-v8a" > jni/Application.mk
-        echo "APP_STL := c++_static" >> jni/Application.mk
-        
-        # Запускаємо збірку
-        \$ANDROID_NDK_HOME/ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=jni/Android.mk NDK_APPLICATION_MK=jni/Application.mk
+        # Запускаємо CMake з Android Toolchain
+        cmake -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=arm64-v8a \
+              -DANDROID_PLATFORM=android-21 \
+              ..
+              
+        # Збираємо бібліотеку
+        make
 
     - name: Upload SO
       uses: actions/upload-artifact@v4
       with:
         name: libnative-lib
-        path: libs/arm64-v8a/libnative-lib.so
+        path: build/libnative-lib.so
