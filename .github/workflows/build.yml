@@ -1,4 +1,4 @@
-name: Build Android SO
+name: Build Android SO 
 on: [push]
 jobs:
   build:
