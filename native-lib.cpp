@@ -1,69 +1,77 @@
 #include <jni.h>
-#include <string>
 #include <cmath>
-#include <algorithm>
-
-// Функція для змішування двох кольорів (ARGB)
-int blendColors(int color1, int color2, float ratio) {
-    float inverse_ratio = 1.0f - ratio;
-    
-    int a = (int)((color1 >> 24 & 0xFF) * inverse_ratio + (color2 >> 24 & 0xFF) * ratio);
-    int r = (int)((color1 >> 16 & 0xFF) * inverse_ratio + (color2 >> 16 & 0xFF) * ratio);
-    int g = (int)((color1 >> 8 & 0xFF) * inverse_ratio + (color2 >> 8 & 0xFF) * ratio);
-    int b = (int)((color1 & 0xFF) * inverse_ratio + (color2 & 0xFF) * ratio);
-    
-    return (a << 24) | (r << 16) | (g << 8) | b;
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_unicreate_NativeHelper_applySmudge(
         JNIEnv* env, jclass clazz, 
-        jintArray pixels_array, 
-        jint width, jint height, 
-        jint startX, jint startY, 
-        jint endX, jint endY, 
-        jint radius, jfloat strength) {
+        jintArray smudge_pixels, 
+        jint diameter,
+        jint canvasW, jint canvasH,
+        jfloat strength) {
     
     // Отримуємо доступ до масиву пікселів
-    jint* pixels = env->GetIntArrayElements(pixels_array, nullptr);
+    jint* pixels = env->GetIntArrayElements(smudge_pixels, nullptr);
     if (pixels == nullptr) return;
 
-    int dx = endX - startX;
-    int dy = endY - startY;
-    
-    // Якщо рух занадто малий, нічого не робимо
-    if (dx == 0 && dy == 0) {
-        env->ReleaseIntArrayElements(pixels_array, pixels, JNI_ABORT);
-        return;
-    }
+    // Створюємо тимчасовий масив для результату, щоб не псувати сусідні пікселі під час розрахунку
+    jint* resultPixels = new jint[diameter * diameter];
 
-    // Проходимо по колу навколо поточного пальця
-    for (int y = -radius; y <= radius; y++) {
-        for (int x = -radius; x <= radius; x++) {
-            if (x * x + y * y <= radius * radius) {
-                int currentX = endX + x;
-                int currentY = endY + y;
+    // Проходимо по кожному пікселю в маленькому квадраті (діаметрі)
+    for (int y = 0; y < diameter; y++) {
+        for (int x = 0; x < diameter; x++) {
+            int idx = y * diameter + x;
+            
+            int r = 0, g = 0, b = 0, a = 0;
+            int count = 0;
 
-                int sourceX = startX + x;
-                int sourceY = startY + y;
-
-                // Перевіряємо, чи не виходимо за межі полотна
-                if (currentX >= 0 && currentX < width && currentY >= 0 && currentY < height &&
-                    sourceX >= 0 && sourceX < width && sourceY >= 0 && sourceY < height) {
+            // Беремо сусідні пікселі (радіус 1 піксель, тобто 3x3)
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int nx = x + dx;
+                    int ny = y + dy;
                     
-                    int dstIndex = currentY * width + currentX;
-                    int srcIndex = sourceY * width + sourceX;
-
-                    int srcColor = pixels[srcIndex];
-                    int dstColor = pixels[dstIndex];
-
-                    // Змішуємо колір джерела з кольором під пальцем
-                    pixels[dstIndex] = blendColors(dstColor, srcColor, strength);
+                    if (nx >= 0 && nx < diameter && ny >= 0 && ny < diameter) {
+                        int c = pixels[ny * diameter + nx];
+                        a += (c >> 24) & 0xFF;
+                        r += (c >> 16) & 0xFF;
+                        g += (c >> 8) & 0xFF;
+                        b += c & 0xFF;
+                        count++;
+                    }
                 }
             }
+
+            // Знаходимо середнє значення кольору
+            int avgA = a / count;
+            int avgR = r / count;
+            int avgG = g / count;
+            int avgB = b / count;
+
+            // Змішуємо оригінальний колір з розмитим (залежно від strength)
+            int origColor = pixels[idx];
+            int origA = (origColor >> 24) & 0xFF;
+            int origR = (origColor >> 16) & 0xFF;
+            int origG = (origColor >> 8) & 0xFF;
+            int origB = origColor & 0xFF;
+
+            int finalA = (int)(origA * (1.0f - strength) + avgA * strength);
+            int finalR = (int)(origR * (1.0f - strength) + avgR * strength);
+            int finalG = (int)(origG * (1.0f - strength) + avgG * strength);
+            int finalB = (int)(origB * (1.0f - strength) + avgB * strength);
+
+            // Записуємо в тимчасовий масив
+            resultPixels[idx] = (finalA << 24) | (finalR << 16) | (finalG << 8) | finalB;
         }
     }
 
-    // Записуємо зміни назад у Java
-    env->ReleaseIntArrayElements(pixels_array, pixels, 0);
+    // Копіюємо результат назад у масив, який прийшов з Java
+    for (int i = 0; i < diameter * diameter; i++) {
+        pixels[i] = resultPixels[i];
+    }
+
+    // Звільняємо пам'ять
+    delete[] resultPixels;
+    
+    // Повертаємо масив у Java
+    env->ReleaseIntArrayElements(smudge_pixels, pixels, 0);
 }
