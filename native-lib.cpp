@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <cmath>
+#include <algorithm>
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_example_unicreate_NativeHelper_applySmudge(
@@ -7,88 +8,83 @@ Java_com_example_unicreate_NativeHelper_applySmudge(
         jintArray smudge_pixels, 
         jint diameter,
         jint canvasW, jint canvasH,
-        jfloat strength) {
+        jfloat strength,
+        jint dx, jint dy) {
     
+    // Отримуємо доступ до масиву пікселів з Java
     jint* pixels = env->GetIntArrayElements(smudge_pixels, nullptr);
     if (pixels == nullptr) return;
 
+    // Створюємо тимчасовий масив для результату
     jint* resultPixels = new jint[diameter * diameter];
+    int radius = diameter / 2;
 
-    float cx = diameter / 2.0f;
-    float cy = diameter / 2.0f;
-    float maxR = diameter / 2.0f;
-
-    // Збільшуємо радіус розмиття для кращого ефекту (було 1, стало 3)
-    int blurRadius = 3; 
+    // Обмежуємо зсув, щоб не вилізти за межі нашого маленького квадрата (пензля)
+    int maxShift = radius / 2;
+    int shiftX = std::max(-maxShift, std::min(maxShift, dx));
+    int shiftY = std::max(-maxShift, std::min(maxShift, dy));
 
     for (int y = 0; y < diameter; y++) {
         for (int x = 0; x < diameter; x++) {
             int idx = y * diameter + x;
             
-            // Створюємо круглу м'яку маску
-            float dx_center = x - cx;
-            float dy_center = y - cy;
-            float dist = std::sqrt(dx_center * dx_center + dy_center * dy_center);
-            float alphaMask = 1.0f - (dist / maxR);
-            if (alphaMask < 0) alphaMask = 0;
-
-            if (alphaMask == 0.0f) {
+            int origColor = pixels[idx];
+            int origA = (origColor >> 24) & 0xFF;
+            
+            // Якщо піксель повністю прозорий, не чіпаємо його (щоб не було чорних плям на фоні)
+            if (origA == 0) {
                 resultPixels[idx] = 0;
                 continue;
             }
 
-            int r = 0, g = 0, b = 0, a = 0;
-            int count = 0;
+            // Звідки "тягнемо" колір (попередня позиція пальця)
+            int srcX = x - shiftX;
+            int srcY = y - shiftY;
+            
+            int srcColor = origColor;
+            int srcA = origA;
 
-            // Розмиття
-            for (int dy = -blurRadius; dy <= blurRadius; dy++) {
-                for (int dx = -blurRadius; dx <= blurRadius; dx++) {
-                    int nx = x + dx;
-                    int ny = y + dy;
-                    
-                    if (nx >= 0 && nx < diameter && ny >= 0 && ny < diameter) {
-                        int c = pixels[ny * diameter + nx];
-                        a += (c >> 24) & 0xFF;
-                        r += (c >> 16) & 0xFF;
-                        g += (c >> 8) & 0xFF;
-                        b += c & 0xFF;
-                        count++;
-                    }
+            // Якщо джерело всередині пензля, беремо колір звідти
+            if (srcX >= 0 && srcX < diameter && srcY >= 0 && srcY < diameter) {
+                int c = pixels[srcY * diameter + srcX];
+                int ca = (c >> 24) & 0xFF;
+                if (ca > 0) {
+                    srcColor = c;
+                    srcA = ca;
                 }
             }
 
-            if (count == 0) {
-                resultPixels[idx] = 0;
-                continue;
-            }
+            // Змішуємо поточний піксель з тим, що притягнули (залежно від strength)
+            int r = (int)(((origColor >> 16) & 0xFF) * (1.0f - strength) + ((srcColor >> 16) & 0xFF) * strength);
+            int g = (int)(((origColor >> 8) & 0xFF) * (1.0f - strength) + ((srcColor >> 8) & 0xFF) * strength);
+            int b = (int)((origColor & 0xFF) * (1.0f - strength) + (srcColor & 0xFF) * strength);
+            int a = (int)(origA * (1.0f - strength) + srcA * strength);
 
-            int avgA = a / count;
-            int avgR = r / count;
-            int avgG = g / count;
-            int avgB = b / count;
+            // Кругла маска для м'яких країв пензля (щоб не було квадратів)
+            float dx_center = x - radius;
+            float dy_center = y - radius;
+            float dist = std::sqrt(dx_center * dx_center + dy_center * dy_center);
+            float alphaMask = 1.0f - (dist / radius);
+            if (alphaMask < 0) alphaMask = 0;
 
-            int origColor = pixels[idx];
-            int origA = (origColor >> 24) & 0xFF;
-            int origR = (origColor >> 16) & 0xFF;
-            int origG = (origColor >> 8) & 0xFF;
-            int origB = origColor & 0xFF;
+            // Робимо краї ще більш плавними (Smoothstep)
+            alphaMask = alphaMask * alphaMask * (3.0f - 2.0f * alphaMask);
 
-            int finalA = (int)(origA * (1.0f - strength) + avgA * strength);
-            int finalR = (int)(origR * (1.0f - strength) + avgR * strength);
-            int finalG = (int)(origG * (1.0f - strength) + avgG * strength);
-            int finalB = (int)(origB * (1.0f - strength) + avgB * strength);
+            a = (int)(a * alphaMask);
+            if (a < 10) a = 0; // Відсікаємо майже невидимий шум по краях
 
-            // Застосовуємо маску до прозорості (краї стануть прозорими)
-            finalA = (int)(finalA * alphaMask);
-
-            resultPixels[idx] = (finalA << 24) | (finalR << 16) | (finalG << 8) | finalB;
+            resultPixels[idx] = (a << 24) | (r << 16) | (g << 8) | b;
         }
     }
 
+    // Копіюємо результат назад у масив, який прийшов з Java
     for (int i = 0; i < diameter * diameter; i++) {
         pixels[i] = resultPixels[i];
     }
 
+    // Звільняємо пам'ять
     delete[] resultPixels;
+    
+    // Повертаємо масив у Java
     env->ReleaseIntArrayElements(smudge_pixels, pixels, 0);
 }
