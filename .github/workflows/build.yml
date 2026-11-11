@@ -1,20 +1,35 @@
-name: Build C++ SO
+name: Build Android SO
 on: [push]
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
       with:
-        ndk-version: r26b
-    - name: Compile directly with Clang
+        ndk-version: r25c
+        
+    - name: Create Makefiles and Build
       run: |
-        $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++ \
-          -shared -o libnative-lib.so native-lib.cpp -static-libstdc++
-        mkdir -p libs/arm64-v8a
-        mv libnative-lib.so libs/arm64-v8a/
+        mkdir -p jni
+        cp native-lib.cpp jni/
+        
+        # Створюємо Android.mk
+        echo "LOCAL_PATH := \$(call my-dir)" > jni/Android.mk
+        echo "include \$(CLEAR_VARS)" >> jni/Android.mk
+        echo "LOCAL_MODULE    := native-lib" >> jni/Android.mk
+        echo "LOCAL_SRC_FILES := native-lib.cpp" >> jni/Android.mk
+        echo "include \$(BUILD_SHARED_LIBRARY)" >> jni/Android.mk
+        
+        # Створюємо Application.mk
+        echo "APP_ABI := arm64-v8a" > jni/Application.mk
+        echo "APP_STL := c++_static" >> jni/Application.mk
+        
+        # Запускаємо збірку
+        \$ANDROID_NDK_HOME/ndk-build NDK_PROJECT_PATH=. APP_BUILD_SCRIPT=jni/Android.mk NDK_APPLICATION_MK=jni/Application.mk
+
     - name: Upload SO
       uses: actions/upload-artifact@v4
       with:
